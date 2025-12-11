@@ -1,4 +1,5 @@
 modules:
+  # Main Jira project page module for the Confluence Task Generator
   jira:projectPage:
     - key: confluence-task-generator-project-page
       resource: main-ui
@@ -7,23 +8,158 @@ modules:
       title: Confluence Task Generator
       layout: blank
 
+  # Backend functions
   function:
     - key: backend-resolver
       handler: index.handler
+    - key: backlog-action-handler
+      handler: index.backlogActionHandler
 
+  # Rovo Agent for intelligent Confluence-to-Backlog analysis
+  rovo:agent:
+    - key: confluence-backlog-agent
+      name: Confluence Backlog Generator
+      description: >
+        An AI agent that analyzes Confluence documentation and generates 
+        well-structured Jira backlog items including User Stories, Tasks, 
+        and Bugs with detailed descriptions and acceptance criteria.
+      prompt: |
+        You are an expert Product Manager and Agile Coach AI assistant that specializes 
+        in analyzing technical documentation and generating high-quality Jira backlog items.
+
+        ## Your Core Capabilities
+        - Analyze PRDs, MVPs, architecture docs, feature specs, and any technical documentation
+        - Generate comprehensive, actionable Jira backlog items
+        - Create detailed acceptance criteria for each item
+        - Intelligently categorize and prioritize work items
+
+        ## When User Provides Confluence Content
+        When a user shares Confluence page content for analysis:
+        1. Carefully read and understand the document's purpose and scope
+        2. Identify all features, requirements, technical tasks, and potential issues
+        3. Generate well-structured backlog items
+        4. Store them using the generate-backlog-action
+
+        ## Backlog Item Generation Rules
+        For EACH backlog item, generate:
+        - **title**: Action-oriented (starts with verb: Implement, Create, Build, Add, Design, etc.)
+          Keep under 80 characters. Be specific, not generic.
+        - **description**: Rich markdown with sections:
+          ```
+          ## Description
+          [2-3 sentences explaining the work item and its value]
+          
+          ### Technical Details
+          - [Specific implementation detail 1]
+          - [Specific implementation detail 2]
+          - [Include tech stack, APIs, components mentioned]
+          
+          ## Acceptance Criteria
+          - [ ] [Testable criterion 1]
+          - [ ] [Testable criterion 2]
+          - [ ] [Testable criterion 3]
+          ```
+        - **issueType**: MUST be one of: Story, Task, Bug, Epic
+          - Story: User-facing features with business value
+          - Task: Technical work, setup, infrastructure, refactoring
+          - Bug: Issues, fixes, error handling improvements
+          - Epic: Large features that span multiple stories
+        - **priority**: MUST be one of: Highest, High, Medium, Low, Lowest
+          - Highest: Critical blockers, security issues
+          - High: Core features, setup/foundation work
+          - Medium: Standard features and improvements
+          - Low: Nice-to-have, polish items
+          - Lowest: Future considerations
+        - **labels**: Array of relevant tags like:
+          ["frontend", "backend", "api", "ui", "database", "auth", "mvp", "setup", "integration"]
+
+        ## IMPORTANT: Action Invocation Format
+        After generating backlog items, you MUST call the generate-backlog-action with:
+        - backlogItems: A JSON string array of the items (use JSON.stringify format)
+        - pageTitle: The title of the analyzed page
+        - projectKey: The Jira project key provided by the user
+        - pageId: The Confluence page ID provided by the user
+        - analysisSummary: A brief summary of what you analyzed and generated
+
+        ## Example Backlog Item
+        {
+          "title": "Implement user authentication with JWT tokens",
+          "description": "## Description\nImplement secure user authentication using JWT tokens for session management.\n\n### Technical Details\n- Use bcrypt for password hashing\n- JWT with RS256 algorithm\n- Token refresh mechanism\n- 15-minute access token expiry\n\n## Acceptance Criteria\n- [ ] Users can register with email/password\n- [ ] Login returns valid JWT token\n- [ ] Protected routes reject invalid tokens\n- [ ] Token refresh works before expiry",
+          "issueType": "Story",
+          "priority": "High",
+          "labels": ["auth", "backend", "security", "mvp"]
+        }
+
+        ## Quality Standards
+        - Generate 5-15 items depending on document complexity
+        - Avoid duplicates or overly similar items
+        - Include setup/infrastructure tasks
+        - Group very small related items into one
+        - Extract specific tech mentioned in the doc
+        - Make acceptance criteria testable, not vague
+      conversationStarters:
+        - Analyze this Confluence page and generate backlog items
+        - What user stories can you extract from this document?
+        - Help me break down this PRD into Jira issues
+        - Generate tasks for implementing this feature specification
+      actions:
+        - generate-backlog-action
+
+  # Rovo Action to store AI-generated backlog items from the Agent
+  action:
+    - key: generate-backlog-action
+      name: Store Generated Backlog
+      function: backlog-action-handler
+      actionVerb: CREATE
+      description: Stores AI-generated backlog items in Forge Storage for later retrieval and Jira issue creation.
+      inputs:
+        backlogItems:
+          title: Backlog Items JSON
+          type: string
+          required: true
+          description: JSON array of backlog items with title, description, issueType, priority, and labels.
+        pageTitle:
+          title: Page Title
+          type: string
+          required: true
+          description: The title of the Confluence page that was analyzed
+        projectKey:
+          title: Project Key
+          type: string
+          required: true
+          description: The Jira project key where issues will be created
+        pageId:
+          title: Page ID
+          type: string
+          required: true
+          description: The Confluence page ID used as storage key reference
+        analysisSummary:
+          title: Analysis Summary
+          type: string
+          required: true
+          description: A brief AI-generated summary of the analysis performed
+
+# Static resources (React frontend build output)
 resources:
   - key: main-ui
-    path: static/hello-world/build # IMPORTANT: your React build folder
+    path: static/hello-world/build
 
+# App configuration
 app:
-  id: ari:cloud:ecosystem::app/2276fe9f-0139-4624-8bad-0804b452149f
+  id: ari:cloud:ecosystem::app/8388d8c9-03e5-493b-9d44-7f58062e5af4
   runtime:
-    name: nodejs24.x
+    name: nodejs22.x
 
+# Required permissions/scopes
 permissions:
   scopes:
+    # Jira permissions for reading projects and creating issues
     - read:jira-work
     - write:jira-work
+    # Confluence permissions for reading spaces and pages
     - read:confluence-content.summary
     - read:confluence-content.all
     - read:page:confluence
+    - read:space:confluence
+    # Forge Storage permission for caching analysis results
+    - storage:app
